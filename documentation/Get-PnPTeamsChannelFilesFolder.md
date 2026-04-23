@@ -20,7 +20,7 @@ Gets the metadata for the location where the files of a channel are stored.
 ## SYNTAX
 
 ```powershell
-Get-PnPTeamsChannel [-Team <TeamsTeamPipeBind>] [-Channel <TeamsChannelPipeBind>] 
+Get-PnPTeamsChannelFilesFolder [-Team <TeamsTeamPipeBind>] [-Channel <TeamsChannelPipeBind>] 
  
 ```
 
