@@ -150,13 +150,13 @@ namespace PnP.PowerShell.Commands.Lists
             if (BreakRoleInheritance)
             {
                 list.BreakRoleInheritance(CopyRoleAssignments, ClearSubscopes);
-                updateRequired = true;
+                ClientContext.ExecuteQueryRetry();
             }
 
             if (list.HasUniqueRoleAssignments && ResetRoleInheritance)
             {
                 list.ResetRoleInheritance();
-                updateRequired = true;
+                ClientContext.ExecuteQueryRetry();
             }
 
             if (!string.IsNullOrEmpty(Title))
