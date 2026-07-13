@@ -17,14 +17,14 @@ Sets list item permissions.
 ### User (Default)
 ```powershell
 Set-PnPListItemPermission [-List] <ListPipeBind> -Identity <ListItemPipeBind> -User <String>
- [-AddRole <String>] [-RemoveRole <String>] [-ClearExisting] [-SystemUpdate] 
+ [-AddRole <String[]>] [-RemoveRole <String[]>] [-ClearExisting] [-SystemUpdate] 
  [-Connection <PnPConnection>] 
 ```
 
 ### Group
 ```powershell
 Set-PnPListItemPermission [-List] <ListPipeBind> -Identity <ListItemPipeBind> -Group <GroupPipeBind>
- [-AddRole <String>] [-RemoveRole <String>] [-ClearExisting] [-SystemUpdate] 
+ [-AddRole <String[]>] [-RemoveRole <String[]>] [-ClearExisting] [-SystemUpdate] 
  [-Connection <PnPConnection>] 
 ```
 
@@ -77,14 +77,21 @@ Set-PnPListItemPermission -List 'Documents' -Identity 1 -AddRole 'Read' -RemoveR
 
 Adds the 'Read' permission to the group of Site collection Visitors while removing the 'Contribute' permissions.
 
+### EXAMPLE 6
+```powershell
+Set-PnPListItemPermission -List 'Documents' -Identity 1 -Group "Site collection Administrators" -AddRole 'my_create','my_read','my_update','my_delete'
+```
+
+Adds the 'my_create', 'my_read', 'my_update' and 'my_delete' roles to the group of Site collection Administrators in one call.
+
 
 ## PARAMETERS
 
 ### -AddRole
-The role that must be assigned to the group or user.
+The role(s) that must be assigned to the group or user.
 
 ```yaml
-Type: RoleDefinitionPipeBind
+Type: RoleDefinitionPipeBind[]
 Parameter Sets: User, Group
 
 Required: False
@@ -193,10 +200,10 @@ Accept wildcard characters: False
 ```
 
 ### -RemoveRole
-The role that must be removed from the group or user.
+The role(s) that must be removed from the group or user.
 
 ```yaml
-Type: RoleDefinitionPipeBind
+Type: RoleDefinitionPipeBind[]
 Parameter Sets: User, Group
 
 Required: False

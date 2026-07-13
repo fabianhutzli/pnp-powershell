@@ -30,11 +30,13 @@ namespace PnP.PowerShell.Commands.Lists
 
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_USER)]
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_GROUP)]
-        public RoleDefinitionPipeBind AddRole;
+        [ValidateNotNullOrEmpty]
+        public RoleDefinitionPipeBind[] AddRole;
 
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_USER)]
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_GROUP)]
-        public RoleDefinitionPipeBind RemoveRole;
+        [ValidateNotNullOrEmpty]
+        public RoleDefinitionPipeBind[] RemoveRole;
 
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_USER)]
         [Parameter(Mandatory = false, ParameterSetName = ParameterSet_GROUP)]
@@ -142,11 +144,11 @@ namespace PnP.PowerShell.Commands.Lists
                 }
                 if (ParameterSpecified(nameof(AddRole)))
                 {
-                    var roleDefinition = AddRole.GetRoleDefinition(ClientContext.Site);
-                    var roleDefinitionBindings = new RoleDefinitionBindingCollection(ClientContext)
-                            {
-                                roleDefinition
-                            };
+                    var roleDefinitionBindings = new RoleDefinitionBindingCollection(ClientContext);
+                    foreach (var addRole in AddRole)
+                    {
+                        roleDefinitionBindings.Add(addRole.GetRoleDefinition(ClientContext.Site));
+                    }
                     var roleAssignments = item.RoleAssignments;
                     roleAssignments.Add(principal, roleDefinitionBindings);
                     ClientContext.Load(roleAssignments);
@@ -154,18 +156,17 @@ namespace PnP.PowerShell.Commands.Lists
                 }
                 if (ParameterSpecified(nameof(RemoveRole)))
                 {
-                    var roleDefinition = RemoveRole.GetRoleDefinition(ClientContext.Site);
+                    var roleNamesToRemove = RemoveRole.Select(r => r.GetRoleDefinition(ClientContext.Site).Name).ToList();
                     var roleAssignment = item.RoleAssignments.GetByPrincipal(principal);
                     var roleDefinitionBindings = roleAssignment.RoleDefinitionBindings;
                     ClientContext.Load(roleDefinitionBindings);
                     ClientContext.ExecuteQueryRetry();
-                    foreach (var roleDefinitionBinding in roleDefinitionBindings.Where(rd => rd.Name == roleDefinition.Name))
+                    foreach (var roleDefinitionBinding in roleDefinitionBindings.Where(rd => roleNamesToRemove.Contains(rd.Name)).ToList())
                     {
                         roleDefinitionBindings.Remove(roleDefinitionBinding);
-                        roleAssignment.Update();
-                        ClientContext.ExecuteQueryRetry();
-                        break;
                     }
+                    roleAssignment.Update();
+                    ClientContext.ExecuteQueryRetry();
                 }
             }
         }
