@@ -359,6 +359,7 @@ namespace PnP.PowerShell.Commands
             stringContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
 
             var httpResponseMessage = GraphRequestHelper.PostHttpContent("beta/sites", stringContent);
+            LogDebug($"Site creation POST accepted with status {(int)httpResponseMessage.StatusCode}");
             var operationLocation = httpResponseMessage.Headers.Location;
 
             if (operationLocation == null)
@@ -366,17 +367,24 @@ namespace PnP.PowerShell.Commands
                 throw new PSInvalidOperationException("The site creation request did not return an operation location to monitor its progress.");
             }
 
-            var operation = GraphRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
-
             if (Wait)
             {
+                // The operation location returned for this beta endpoint is not necessarily hosted on graph.microsoft.com
+                // (it has been observed pointing at the tenant's own https://{tenant}.sharepoint.com/_api/v2.1/... instead),
+                // so the token used to poll it must be requested for whatever resource that URL actually belongs to.
+                var operationAudience = $"{operationLocation.Scheme}://{operationLocation.Authority}/.default";
+                var operationRequestHelper = new Utilities.REST.ApiRequestHelper(GetType(), Connection, operationAudience);
+
+                LogDebug($"Polling operation status at: {operationLocation.AbsoluteUri}");
+                var operation = operationRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
+
                 var retryCount = 0;
                 while (operation != null
                        && operation.Status != "succeeded" && operation.Status != "failed"
                        && retryCount < 120 && !Stopping)
                 {
                     Thread.Sleep(5000);
-                    operation = GraphRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
+                    operation = operationRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
                     retryCount++;
                 }
 
