@@ -1,20 +1,30 @@
-﻿using Microsoft.SharePoint.Client;
+using Microsoft.SharePoint.Client;
 using PnP.Core.Admin.Model.Microsoft365;
 using PnP.Core.Admin.Model.SharePoint;
 using PnP.Core.Services;
 using PnP.PowerShell.Commands.Attributes;
+using PnP.PowerShell.Commands.Base;
 using PnP.PowerShell.Commands.Enums;
+using PnP.PowerShell.Commands.Model;
+using PnP.PowerShell.Commands.Model.Graph;
 using PnP.PowerShell.Commands.Utilities;
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Management.Automation;
+using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
+using Resources = PnP.PowerShell.Commands.Properties.Resources;
+using TokenHandler = PnP.PowerShell.Commands.Base.TokenHandler;
 
 namespace PnP.PowerShell.Commands
 {
     [Cmdlet(VerbsCommon.New, "PnPSite")]
     [RequiredApiApplicationPermissions("graph/Group.ReadWrite.All")]
-    public class NewSite : PnPSharePointCmdlet, IDynamicParameters
+    [RequiredApiDelegatedOrApplicationPermissions("graph/Sites.Create.All")]
+    public class NewSite : PnPGraphCmdlet, IDynamicParameters
     {
         private const string ParameterSet_COMMUNICATIONBUILTINDESIGN = "Communication Site with Built-In Site Design";
         private const string ParameterSet_COMMUNICATIONCUSTOMDESIGN = "Communication Site with Custom Design";
@@ -37,6 +47,18 @@ namespace PnP.PowerShell.Commands
         [Parameter(Mandatory = false)]
         public Framework.Enums.TimeZone TimeZone;
 
+        /// <summary>
+        /// If specified, the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM.
+        /// Only the Microsoft Graph Sites.Create.All permission is required - no SharePoint API permission is needed.
+        /// Only supported in combination with -Type CommunicationSite or -Type TeamSiteWithoutMicrosoft365Group.
+        /// </summary>
+        [Parameter(Mandatory = false)]
+        public SwitchParameter UseGraph;
+
+        // A connection capable of acquiring a Graph token is only strictly required when -UseGraph is used; the classic
+        // CSOM based site types below (including over SharePoint ACS app-only connections) do not need one.
+        protected override bool RequiresGraphCapableConnection => UseGraph.IsPresent;
+
         public object GetDynamicParameters()
         {
             switch (Type)
@@ -56,9 +78,31 @@ namespace PnP.PowerShell.Commands
             return null;
         }
 
+        protected override void BeginProcessing()
+        {
+            base.BeginProcessing();
+
+            // The classic CSOM based site types need a live SharePoint context; PnPGraphCmdlet only requires that when -UseGraph is used.
+            if (!UseGraph.IsPresent && ClientContext == null)
+            {
+                if (ParameterSpecified(nameof(Connection)))
+                {
+                    throw new InvalidOperationException(Resources.NoSharePointConnectionInProvidedConnection);
+                }
+                else
+                {
+                    throw new InvalidOperationException(Resources.NoDefaultSharePointConnection);
+                }
+            }
+        }
+
         protected override void ExecuteCmdlet()
         {
-            if (Type == SiteType.CommunicationSite)
+            if (UseGraph.IsPresent)
+            {
+                CreateSiteViaGraph();
+            }
+            else if (Type == SiteType.CommunicationSite)
             {
                 EnsureDynamicParameters(_communicationSiteParameters);
                 if (!ParameterSpecified("Lcid"))
@@ -229,6 +273,130 @@ namespace PnP.PowerShell.Commands
                 {
                     WriteObject(returnedContext.Url);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Creates the site through the Microsoft Graph beta site creation API (POST /sites), which only requires the
+        /// Sites.Create.All Graph permission. Only CommunicationSite and TeamSiteWithoutMicrosoft365Group are supported,
+        /// since the Graph endpoint has no template for a Microsoft 365 group-connected team site.
+        /// </summary>
+        private void CreateSiteViaGraph()
+        {
+            if (Type == SiteType.TeamSite)
+            {
+                throw new PSArgumentException("-UseGraph can only be used with -Type CommunicationSite or -Type TeamSiteWithoutMicrosoft365Group. To create a Microsoft 365 group-connected team site, use New-PnPSite without -UseGraph.", nameof(Type));
+            }
+
+            ThrowIfSpecifiedForGraph(nameof(HubSiteId));
+            ThrowIfSpecifiedForGraph(nameof(TimeZone));
+
+            string title;
+            string url;
+            string description;
+            bool shareByEmailEnabled;
+            string owner;
+            string templateValue;
+
+            if (Type == SiteType.CommunicationSite)
+            {
+                EnsureDynamicParameters(_communicationSiteParameters);
+                ThrowIfSpecifiedForGraph(nameof(_communicationSiteParameters.Classification));
+                ThrowIfSpecifiedForGraph(nameof(_communicationSiteParameters.SiteDesign));
+                ThrowIfSpecifiedForGraph(nameof(_communicationSiteParameters.SiteDesignId));
+                ThrowIfSpecifiedForGraph(nameof(_communicationSiteParameters.PreferredDataLocation));
+                ThrowIfSpecifiedForGraph(nameof(_communicationSiteParameters.SensitivityLabel));
+
+                title = _communicationSiteParameters.Title;
+                url = _communicationSiteParameters.Url;
+                description = _communicationSiteParameters.Description;
+                shareByEmailEnabled = _communicationSiteParameters.ShareByEmailEnabled;
+                owner = _communicationSiteParameters.Owner;
+                templateValue = "sitepagepublishing";
+            }
+            else
+            {
+                EnsureDynamicParameters(_teamSiteWithoutMicrosoft365GroupParameters);
+                ThrowIfSpecifiedForGraph(nameof(_teamSiteWithoutMicrosoft365GroupParameters.Classification));
+                ThrowIfSpecifiedForGraph(nameof(_teamSiteWithoutMicrosoft365GroupParameters.SiteDesignId));
+                ThrowIfSpecifiedForGraph(nameof(_teamSiteWithoutMicrosoft365GroupParameters.PreferredDataLocation));
+                ThrowIfSpecifiedForGraph(nameof(_teamSiteWithoutMicrosoft365GroupParameters.SensitivityLabel));
+
+                title = _teamSiteWithoutMicrosoft365GroupParameters.Title;
+                url = _teamSiteWithoutMicrosoft365GroupParameters.Url;
+                description = _teamSiteWithoutMicrosoft365GroupParameters.Description;
+                shareByEmailEnabled = _teamSiteWithoutMicrosoft365GroupParameters.ShareByEmailEnabled;
+                owner = _teamSiteWithoutMicrosoft365GroupParameters.Owner;
+                templateValue = "sts";
+            }
+
+            var postData = new Dictionary<string, object>
+            {
+                { "name", title },
+                { "webUrl", url },
+                { "template", templateValue }
+            };
+
+            if (!string.IsNullOrEmpty(description))
+            {
+                postData.Add("description", description);
+            }
+
+            if (ParameterSpecified("Lcid"))
+            {
+                var lcid = Type == SiteType.CommunicationSite ? _communicationSiteParameters.Lcid : _teamSiteWithoutMicrosoft365GroupParameters.Lcid;
+                postData.Add("locale", new CultureInfo((int)lcid).Name);
+            }
+
+            if (shareByEmailEnabled)
+            {
+                postData.Add("shareByEmailEnabled", true);
+            }
+
+            if (!string.IsNullOrEmpty(owner))
+            {
+                postData.Add("ownerIdentityToResolve", new Dictionary<string, string> { { "email", owner } });
+            }
+
+            var stringContent = new StringContent(JsonSerializer.Serialize(postData));
+            stringContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+
+            var httpResponseMessage = GraphRequestHelper.PostHttpContent("beta/sites", stringContent);
+            var operationLocation = httpResponseMessage.Headers.Location;
+
+            if (operationLocation == null)
+            {
+                throw new PSInvalidOperationException("The site creation request did not return an operation location to monitor its progress.");
+            }
+
+            var operation = GraphRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
+
+            if (Wait)
+            {
+                var retryCount = 0;
+                while (operation != null
+                       && operation.Status != "succeeded" && operation.Status != "failed"
+                       && retryCount < 120 && !Stopping)
+                {
+                    Thread.Sleep(5000);
+                    operation = GraphRequestHelper.Get<SiteProvisioningOperation>(operationLocation.AbsoluteUri);
+                    retryCount++;
+                }
+
+                if (operation?.Status == "failed")
+                {
+                    throw new PSInvalidOperationException($"Site creation failed: {operation.StatusDetail ?? operation.Error?.Message}");
+                }
+            }
+
+            WriteObject(url);
+        }
+
+        private void ThrowIfSpecifiedForGraph(string parameterName)
+        {
+            if (ParameterSpecified(parameterName))
+            {
+                throw new PSNotSupportedException($"-{parameterName} is not supported when using -UseGraph.");
             }
         }
 
@@ -404,12 +572,56 @@ namespace PnP.PowerShell.Commands
             return default;
         }
 
+        /// <summary>
+        /// Returns a SharePoint-audience access token, needed only by <see cref="GetSensitivityLabelGuid"/>. This class
+        /// derives from <see cref="PnPGraphCmdlet"/> whose own AccessToken is Graph-audience, so this replicates the
+        /// SharePoint-audience token logic that used to live on PnPSharePointCmdlet.
+        /// </summary>
+        private string SharePointAccessToken
+        {
+            get
+            {
+                if (Connection != null)
+                {
+                    if (Connection.ConnectionMethod == ConnectionMethod.AzureADWorkloadIdentity)
+                    {
+                        var resourceUri = new Uri(Connection.Url);
+                        var defaultResource = $"{resourceUri.Scheme}://{resourceUri.Authority}/.default";
+                        return TokenHandler.GetAzureADWorkloadIdentityTokenAsync(defaultResource).GetAwaiter().GetResult();
+                    }
+                    else if (Connection.ConnectionMethod == ConnectionMethod.FederatedIdentity)
+                    {
+                        var resourceUri = new Uri(Connection.Url);
+                        var defaultResource = $"{resourceUri.Scheme}://{resourceUri.Authority}/.default";
+                        return TokenHandler.GetFederatedIdentityTokenAsync(Connection.ClientId, Connection.Tenant, defaultResource).GetAwaiter().GetResult();
+                    }
+                    else
+                    {
+                        if (Connection.Context != null)
+                        {
+                            Framework.Utilities.Context.ClientContextSettings settings = InternalClientContextExtensions.GetContextSettings(Connection.Context);
+                            if (settings != null)
+                            {
+                                var authManager = settings.AuthenticationManager;
+                                if (authManager != null)
+                                {
+                                    return authManager.GetAccessTokenAsync(Connection.Context.Url).GetAwaiter().GetResult();
+                                }
+                            }
+                        }
+                    }
+                }
+                LogDebug("Unable to acquire token for resource " + Connection.Url);
+                return null;
+            }
+        }
+
         private Guid GetSensitivityLabelGuid(string sensitivityLabel)
         {
             if (string.IsNullOrEmpty(sensitivityLabel))
                 return Guid.Empty;
 
-            var sensitivityLabelsPayload = Utilities.REST.RestHelper.Get(Connection.HttpClient, $"{ClientContext.Url.TrimEnd('/')}/_api/groupsitemanager/GetGroupCreationContext", AccessToken);
+            var sensitivityLabelsPayload = Utilities.REST.RestHelper.Get(Connection.HttpClient, $"{ClientContext.Url.TrimEnd('/')}/_api/groupsitemanager/GetGroupCreationContext", SharePointAccessToken);
             var jsonDoc = JsonDocument.Parse(sensitivityLabelsPayload);
 
             var root = jsonDoc.RootElement;

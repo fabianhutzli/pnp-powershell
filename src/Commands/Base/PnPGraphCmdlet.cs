@@ -33,13 +33,19 @@ namespace PnP.PowerShell.Commands.Base
         /// <summary>
         /// Returns an Access Token for the Microsoft Graph API, if available, otherwise NULL
         /// </summary>
-        public string AccessToken => TokenHandler.GetAccessToken(MicrosoftGraphDefaultAudience, Connection);        
+        public string AccessToken => TokenHandler.GetAccessToken(MicrosoftGraphDefaultAudience, Connection);
+
+        /// <summary>
+        /// Controls whether this cmdlet requires a connection capable of acquiring a Microsoft Graph token (i.e. blocks WebLogin/Cookie and SharePoint ACS app-only connections).
+        /// Override and return false for cmdlets that can optionally run entirely against a SharePoint CSOM context without ever needing a Graph token.
+        /// </summary>
+        protected virtual bool RequiresGraphCapableConnection => true;
 
         protected override void BeginProcessing()
         {
             base.BeginProcessing();
 
-            if (Connection?.Context != null)
+            if (RequiresGraphCapableConnection && Connection?.Context != null)
             {
                 var contextSettings = Connection.Context.GetContextSettings();
                 if (contextSettings?.Type == Framework.Utilities.Context.ClientContextType.Cookie || contextSettings?.Type == Framework.Utilities.Context.ClientContextType.SharePointACSAppOnly)

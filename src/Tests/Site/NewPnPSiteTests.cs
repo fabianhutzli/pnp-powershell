@@ -78,6 +78,23 @@ namespace PnP.PowerShell.Tests.Site
                 Assert.IsNotNull(results);
             }
         }
+
+        // Live testing against -UseGraph requires a connection whose app registration is granted only the
+        // Microsoft Graph "Sites.Create.All" permission (delegated or application) - no SharePoint API permission
+        // is needed since that code path never establishes a SharePoint CSOM context.
+        //[TestMethod]
+        public void NewPnPSiteUseGraphTest()
+        {
+            using (var scope = new PSTestScope(true))
+            {
+                // scope.ExecuteCommand("New-PnPSite",
+                //     new CommandParameter("Type", "CommunicationSite"),
+                //     new CommandParameter("Title", "Test Communication Site"),
+                //     new CommandParameter("Url", "https://contoso.sharepoint.com/sites/testgraphsite"),
+                //     new CommandParameter("UseGraph"),
+                //     new CommandParameter("Wait"));
+            }
+        }
         #endregion
     }
 }

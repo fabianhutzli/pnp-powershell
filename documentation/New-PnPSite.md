@@ -34,6 +34,8 @@ New-PnPSite -Type TeamSiteWithoutMicrosoft365Group -Title <String> -Url <String>
 ## DESCRIPTION
 The New-PnPSite cmdlet creates a new site collection for the current tenant. Currently only 'modern' sites like Communication Site , Modern Microsoft 365 group-connected team sites and Modern Team sites not connected to M365 groups are supported. If you want to create a classic site, use New-PnPTenantSite. Note that the -Type parameter is mandatory to be used to indicate which type of site you would like to create. Based on the type of site you specify, you will be able to provide the additional arguments that are valid for that site type, so it is recommended to provide this as the first argument.
 
+If -UseGraph is specified, the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM. This only requires the Microsoft Graph `Sites.Create.All` permission (delegated or application) - no SharePoint API permission is needed, since no SharePoint context is used to create the site. `Connect-PnPOnline` still requires a `-Url` to establish the connection itself, but the app registration used does not need any SharePoint API permission granted. `-UseGraph` is only supported with `-Type CommunicationSite` or `-Type TeamSiteWithoutMicrosoft365Group` (the Graph endpoint has no template for a Microsoft 365 group-connected team site), and does not support `-Classification`, `-SiteDesign`, `-SiteDesignId`, `-PreferredDataLocation`, `-SensitivityLabel`, `-HubSiteId` or `-TimeZone`.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
@@ -154,6 +156,13 @@ New-PnPSite -Type TeamSite -TimeZone UTCPLUS0200_HELSINKI_KYIV_RIGA_SOFIA_TALLIN
 ```
 
 This will create a new Modern team site collection connected to a Microsoft 365 Group with the title 'Contoso' and the url 'https://tenant.sharepoint.com/sites/contoso' and sets the timezone to UTC + 2 which is the Eastern European time zone. In addition to that, **if application permissions are used** , it will also set resource behavior options to disable welcome mails, make calendar read only , hide the group visibility in outlook and other options
+
+### EXAMPLE 18
+```powershell
+New-PnPSite -Type CommunicationSite -Title Contoso -Url https://tenant.sharepoint.com/sites/contoso -UseGraph
+```
+
+This will create a new Communications Site collection with the title 'Contoso' and the url 'https://tenant.sharepoint.com/sites/contoso' through the Microsoft Graph site creation API. Only the Graph `Sites.Create.All` permission is required for this - no SharePoint API permission is needed.
 
 ## PARAMETERS
 
@@ -578,6 +587,20 @@ If specified the cmdlet will wait until the site has been fully created and all 
 ```yaml
 Type: SwitchParameter
 Parameter Sets: (All)
+
+Required: False
+Position: Named
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -UseGraph
+If specified the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM. Only the Microsoft Graph `Sites.Create.All` permission is required - no SharePoint API permission is needed. Only supported with `-Type CommunicationSite` or `-Type TeamSiteWithoutMicrosoft365Group`; `-Classification`, `-SiteDesign`, `-SiteDesignId`, `-PreferredDataLocation`, `-SensitivityLabel`, `-HubSiteId` and `-TimeZone` are not supported in combination with this switch.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: CommunicationSite, TeamSiteWithoutMicrosoft365Group
 
 Required: False
 Position: Named
