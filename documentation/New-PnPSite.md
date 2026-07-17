@@ -581,12 +581,12 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
-### -Wait
-If specified the cmdlet will wait until the site has been fully created and all site artifacts have been provisioned by SharePoint. Notice that this can take a while.
+### -UseGraph
+If specified the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM. Only the Microsoft Graph `Sites.Create.All` permission is required - no SharePoint API permission is needed. Only supported with `-Type CommunicationSite` or `-Type TeamSiteWithoutMicrosoft365Group`; `-Classification`, `-SiteDesign`, `-SiteDesignId`, `-PreferredDataLocation`, `-SensitivityLabel`, `-HubSiteId` and `-TimeZone` are not supported in combination with this switch.
 
 ```yaml
 Type: SwitchParameter
-Parameter Sets: (All)
+Parameter Sets: CommunicationSite, TeamSiteWithoutMicrosoft365Group
 
 Required: False
 Position: Named
@@ -595,12 +595,12 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
-### -UseGraph
-If specified the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM. Only the Microsoft Graph `Sites.Create.All` permission is required - no SharePoint API permission is needed. Only supported with `-Type CommunicationSite` or `-Type TeamSiteWithoutMicrosoft365Group`; `-Classification`, `-SiteDesign`, `-SiteDesignId`, `-PreferredDataLocation`, `-SensitivityLabel`, `-HubSiteId` and `-TimeZone` are not supported in combination with this switch.
+### -Wait
+If specified the cmdlet will wait until the site has been fully created and all site artifacts have been provisioned by SharePoint. Notice that this can take a while.
 
 ```yaml
 Type: SwitchParameter
-Parameter Sets: CommunicationSite, TeamSiteWithoutMicrosoft365Group
+Parameter Sets: (All)
 
 Required: False
 Position: Named

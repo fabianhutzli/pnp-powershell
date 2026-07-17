@@ -47,16 +47,10 @@ namespace PnP.PowerShell.Commands
         [Parameter(Mandatory = false)]
         public Framework.Enums.TimeZone TimeZone;
 
-        /// <summary>
-        /// If specified, the site is created through the Microsoft Graph site creation API instead of through SharePoint CSOM.
-        /// Only the Microsoft Graph Sites.Create.All permission is required - no SharePoint API permission is needed.
-        /// Only supported in combination with -Type CommunicationSite or -Type TeamSiteWithoutMicrosoft365Group.
-        /// </summary>
         [Parameter(Mandatory = false)]
         public SwitchParameter UseGraph;
 
-        // A connection capable of acquiring a Graph token is only strictly required when -UseGraph is used; the classic
-        // CSOM based site types below (including over SharePoint ACS app-only connections) do not need one.
+        // Only -UseGraph needs a Graph-capable connection; the CSOM site types below still support ACS app-only.
         protected override bool RequiresGraphCapableConnection => UseGraph.IsPresent;
 
         public object GetDynamicParameters()
@@ -276,11 +270,6 @@ namespace PnP.PowerShell.Commands
             }
         }
 
-        /// <summary>
-        /// Creates the site through the Microsoft Graph beta site creation API (POST /sites), which only requires the
-        /// Sites.Create.All Graph permission. Only CommunicationSite and TeamSiteWithoutMicrosoft365Group are supported,
-        /// since the Graph endpoint has no template for a Microsoft 365 group-connected team site.
-        /// </summary>
         private void CreateSiteViaGraph()
         {
             if (Type == SiteType.TeamSite)
@@ -572,11 +561,7 @@ namespace PnP.PowerShell.Commands
             return default;
         }
 
-        /// <summary>
-        /// Returns a SharePoint-audience access token, needed only by <see cref="GetSensitivityLabelGuid"/>. This class
-        /// derives from <see cref="PnPGraphCmdlet"/> whose own AccessToken is Graph-audience, so this replicates the
-        /// SharePoint-audience token logic that used to live on PnPSharePointCmdlet.
-        /// </summary>
+        // PnPGraphCmdlet.AccessToken is Graph-audience; GetSensitivityLabelGuid needs a SharePoint-audience token instead.
         private string SharePointAccessToken
         {
             get
