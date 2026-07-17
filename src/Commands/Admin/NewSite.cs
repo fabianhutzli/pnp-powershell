@@ -331,10 +331,16 @@ namespace PnP.PowerShell.Commands
                 postData.Add("description", description);
             }
 
+            // The Graph endpoint's "locale" property is documented as optional but is rejected with a generic
+            // "badArgument" error when omitted, so it must always be sent.
             if (ParameterSpecified("Lcid"))
             {
                 var lcid = Type == SiteType.CommunicationSite ? _communicationSiteParameters.Lcid : _teamSiteWithoutMicrosoft365GroupParameters.Lcid;
                 postData.Add("locale", new CultureInfo((int)lcid).Name);
+            }
+            else
+            {
+                postData.Add("locale", "en-US");
             }
 
             if (shareByEmailEnabled)
@@ -347,7 +353,9 @@ namespace PnP.PowerShell.Commands
                 postData.Add("ownerIdentityToResolve", new Dictionary<string, string> { { "email", owner } });
             }
 
-            var stringContent = new StringContent(JsonSerializer.Serialize(postData));
+            var serializedPostData = JsonSerializer.Serialize(postData);
+            LogDebug($"Creating site via Microsoft Graph with payload: {serializedPostData}");
+            var stringContent = new StringContent(serializedPostData);
             stringContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
 
             var httpResponseMessage = GraphRequestHelper.PostHttpContent("beta/sites", stringContent);
