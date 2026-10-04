@@ -1,9 +1,16 @@
 ﻿using Microsoft.SharePoint.Client;
 using PnP.Core.Model.SharePoint;
 using PnP.Framework.Utilities;
+using PnP.PowerShell.Commands.Model.Graph;
 using System;
+using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Management.Automation;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace PnP.PowerShell.Commands.Files
@@ -52,6 +59,13 @@ namespace PnP.PowerShell.Commands.Files
         [Parameter(Mandatory = false, ParameterSetName = URLASMEMORYSTREAM)]
         public SwitchParameter AsMemoryStream;
 
+        [Parameter(Mandatory = false, ParameterSetName = URLASFILEOBJECT)]
+        [Parameter(Mandatory = false, ParameterSetName = URLASLISTITEM)]
+        [Parameter(Mandatory = false, ParameterSetName = URLTOPATH)]
+        [Parameter(Mandatory = false, ParameterSetName = URLASSTRING)]
+        [Parameter(Mandatory = false, ParameterSetName = URLASMEMORYSTREAM)]
+        public SwitchParameter UseGraph;
+
         protected override void ExecuteCmdlet()
         {
             var serverRelativeUrl = string.Empty;
@@ -65,6 +79,14 @@ namespace PnP.PowerShell.Commands.Files
                 {
                     Path = System.IO.Path.Combine(SessionState.Path.CurrentFileSystemLocation.Path, Path);
                 }
+            }
+
+            if (UseGraph)
+            {
+                // Must not touch the site, web or list: an app holding only a Lists, ListItems or Files selected
+                // permission cannot read any of them, and lower selected scopes never grant access upwards.
+                ExecuteThroughGraph();
+                return;
             }
 
             if (Uri.IsWellFormedUriString(Url, UriKind.Absolute))
@@ -155,6 +177,161 @@ namespace PnP.PowerShell.Commands.Files
                     WriteObject(stream);
                     break;
             }
+        }
+
+        private void ExecuteThroughGraph()
+        {
+            // The shares endpoint resolves the file from its URL alone, so no site, drive or list id has to be looked up first
+            var shareId = EncodeSharingUrl(GetAbsoluteFileUrl());
+            LogDebug($"Addressing the file through Microsoft Graph as share {shareId}");
+
+            switch (ParameterSetName)
+            {
+                case URLTOPATH:
+                    var driveItemToDownload = GetDriveItemJson(shareId);
+                    var name = driveItemToDownload.TryGetProperty("name", out JsonElement nameElement) ? nameElement.GetString() : null;
+                    string fileOut = System.IO.Path.Combine(Path, !string.IsNullOrEmpty(Filename) ? Filename : name);
+
+                    if (System.IO.File.Exists(fileOut) && !Force)
+                    {
+                        LogWarning($"File '{System.IO.Path.GetFileName(fileOut)}' exists already. Use the -Force parameter to overwrite the file.");
+                    }
+                    else
+                    {
+                        using var response = DownloadContent(driveItemToDownload);
+                        using var downloadedContentStream = response.Content.ReadAsStream();
+                        using var content = System.IO.File.Create(fileOut);
+                        downloadedContentStream.CopyTo(content, 2 * 1024 * 1024);
+                    }
+                    break;
+
+                case URLASFILEOBJECT:
+                    WriteObject(GraphRequestHelper.Get<DriveItem>($"v1.0/shares/{shareId}/driveItem"));
+                    break;
+
+                case URLASLISTITEM:
+                    JsonElement listItem;
+                    try
+                    {
+                        listItem = JsonSerializer.Deserialize<JsonElement>(GraphRequestHelper.Get($"v1.0/shares/{shareId}/listItem?$expand=fields"));
+                    }
+                    catch (GraphException ex) when (ex.HttpResponse?.StatusCode == HttpStatusCode.NotFound && !ThrowExceptionIfFileNotFound)
+                    {
+                        return;
+                    }
+                    WriteObject(ConvertToGraphListItem(listItem));
+                    break;
+
+                case URLASSTRING:
+                    using (var response = DownloadContent(GetDriveItemJson(shareId)))
+                    {
+                        WriteObject(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                    }
+                    break;
+
+                case URLASMEMORYSTREAM:
+                    using (var response = DownloadContent(GetDriveItemJson(shareId)))
+                    {
+                        WriteObject(new System.IO.MemoryStream(response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()));
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Builds the absolute URL of the file from the URL as provided, without querying SharePoint for the web URL
+        /// </summary>
+        private string GetAbsoluteFileUrl()
+        {
+            Uri absoluteUri;
+            if (Uri.TryCreate(Url, UriKind.Absolute, out Uri providedUri) && (providedUri.Scheme == Uri.UriSchemeHttps || providedUri.Scheme == Uri.UriSchemeHttp))
+            {
+                absoluteUri = providedUri;
+            }
+            else
+            {
+                var connectionUri = new Uri(Connection.Url);
+                absoluteUri = Url.StartsWith('/')
+                    ? new Uri($"{connectionUri.Scheme}://{connectionUri.Authority}{Url}")
+                    : new Uri($"{connectionUri.GetLeftPart(UriPartial.Path).TrimEnd('/')}/{Url}");
+            }
+
+            // Re-encode every segment so the URL is encoded exactly once, whether it was passed encoded or not
+            var path = string.Join("/", absoluteUri.AbsolutePath.Split('/').Select(segment => Uri.EscapeDataString(Uri.UnescapeDataString(segment))));
+            return $"{absoluteUri.Scheme}://{absoluteUri.Authority}{path}";
+        }
+
+        /// <summary>
+        /// Encodes a URL into a Microsoft Graph sharing token, see https://learn.microsoft.com/graph/api/shares-get#encoding-sharing-urls
+        /// </summary>
+        private static string EncodeSharingUrl(string url)
+        {
+            var base64Value = Convert.ToBase64String(Encoding.UTF8.GetBytes(url));
+            return "u!" + base64Value.TrimEnd('=').Replace('/', '_').Replace('+', '-');
+        }
+
+        private JsonElement GetDriveItemJson(string shareId)
+        {
+            return JsonSerializer.Deserialize<JsonElement>(GraphRequestHelper.Get($"v1.0/shares/{shareId}/driveItem"));
+        }
+
+        /// <summary>
+        /// Downloads the content of a drive item through its pre-authenticated download URL, which needs no Authorization header
+        /// </summary>
+        private HttpResponseMessage DownloadContent(JsonElement driveItem)
+        {
+            if (!driveItem.TryGetProperty("@microsoft.graph.downloadUrl", out JsonElement downloadUrlElement) || string.IsNullOrEmpty(downloadUrlElement.GetString()))
+            {
+                throw new PSArgumentException($"The item at {Url} has no content to download. Ensure it is a file and not a folder.", nameof(Url));
+            }
+
+            var response = Connection.HttpClient.GetAsync(downloadUrlElement.GetString(), HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+            if (!response.IsSuccessStatusCode)
+            {
+                response.Dispose();
+                throw new PSInvalidOperationException($"Downloading the content of {Url} failed with status code {(int)response.StatusCode} {response.StatusCode}");
+            }
+            return response;
+        }
+
+        private static GraphListItem ConvertToGraphListItem(JsonElement listItem)
+        {
+            var result = new GraphListItem
+            {
+                Id = GetString(listItem, "id"),
+                WebUrl = GetString(listItem, "webUrl"),
+                ETag = GetString(listItem, "eTag"),
+                CreatedDateTime = listItem.TryGetProperty("createdDateTime", out JsonElement created) && created.TryGetDateTime(out DateTime createdValue) ? createdValue : null,
+                LastModifiedDateTime = listItem.TryGetProperty("lastModifiedDateTime", out JsonElement modified) && modified.TryGetDateTime(out DateTime modifiedValue) ? modifiedValue : null,
+                Fields = new Hashtable(StringComparer.OrdinalIgnoreCase)
+            };
+
+            if (listItem.TryGetProperty("fields", out JsonElement fields))
+            {
+                foreach (var field in fields.EnumerateObject())
+                {
+                    if (field.Name.StartsWith('@'))
+                    {
+                        continue;
+                    }
+                    result.Fields[field.Name] = field.Value.ValueKind switch
+                    {
+                        JsonValueKind.String => field.Value.GetString(),
+                        JsonValueKind.Number => field.Value.TryGetInt64(out long longValue) ? longValue : field.Value.GetDouble(),
+                        JsonValueKind.True => true,
+                        JsonValueKind.False => false,
+                        JsonValueKind.Null => null,
+                        _ => field.Value.GetRawText()
+                    };
+                }
+            }
+
+            return result;
+        }
+
+        private static string GetString(JsonElement element, string propertyName)
+        {
+            return element.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         }
 
         private static async Task SaveFileToLocal(IFile fileToDownload, string filePath)
