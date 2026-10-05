@@ -24,6 +24,13 @@ namespace PnP.PowerShell.Commands
     [Cmdlet(VerbsCommon.New, "PnPSite")]
     [RequiredApiApplicationPermissions("graph/Group.ReadWrite.All")]
     [RequiredApiDelegatedOrApplicationPermissions("graph/Sites.Create.All")]
+
+    // Without -UseGraph, Microsoft Graph is only called for -Type TeamSite, which creates the Microsoft 365 group behind the site. The application permission above is declared
+    // unconditionally so that path is validated, the delegated equivalent is surfaced informationally to avoid warning on the two site types that never call Graph.
+    [ApiPermissionsDependOnResource(
+        ParameterName = nameof(Type),
+        Remarks = "Without -UseGraph, Microsoft Graph is only called for -Type TeamSite, to create the Microsoft 365 group behind the site. That needs Group.ReadWrite.All, as a delegated permission when connecting delegated or as the application permission declared on this cmdlet. A communication site and a team site without a Microsoft 365 group are created through SharePoint only and do not use the Microsoft Graph permission, even though it is listed above. With -UseGraph, the site is created through Microsoft Graph and needs Sites.Create.All.",
+        DocumentationUrl = "https://pnp.github.io/powershell/cmdlets/New-PnPSite.html")]
     public class NewSite : PnPGraphCmdlet, IDynamicParameters
     {
         private const string ParameterSet_COMMUNICATIONBUILTINDESIGN = "Communication Site with Built-In Site Design";
@@ -594,7 +601,7 @@ namespace PnP.PowerShell.Commands
                     {
                         var resourceUri = new Uri(Connection.Url);
                         var defaultResource = $"{resourceUri.Scheme}://{resourceUri.Authority}/.default";
-                        return TokenHandler.GetFederatedIdentityTokenAsync(Connection.ClientId, Connection.Tenant, defaultResource).GetAwaiter().GetResult();
+                        return TokenHandler.GetFederatedIdentityTokenAsync(Connection.ClientId, Connection.Tenant, defaultResource, Connection.AzureEnvironment).GetAwaiter().GetResult();
                     }
                     else
                     {
